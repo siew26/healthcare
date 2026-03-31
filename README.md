@@ -5,20 +5,22 @@
 An end-to-end data pipeline that ingests healthcare data from Kaggle, processes it through a multi-layer architecture (raw → staging → mart), and loads it into Google BigQuery for analysis.
 
 **Pipeline layers:**
-```
-Kaggle API
-    ↓  extract   download_data.py
-    ↓  load      upload_to_gcs.py       → GCS bucket (data lake)
-    ↓  raw       load_healthcare_csv.py → BigQuery: healthcare_raw.load_raw
-    ↓  staging   stg_admissions.sql     → BigQuery: healthcare_staging.stg_admissions
-                 stg_patients.sql       → BigQuery: healthcare_staging.stg_patients
-    ↓  mart      dim_hospitals.sql           → healthcare_mart.dim_hospitals
-                 dim_medical_conditions.sql  → healthcare_mart.dim_medical_conditions
-                 fact_hospital_admissions.sql → healthcare_mart.fact_hospital_admissions
-                 fact_admissions_by_hospital.sql → healthcare_mart.fact_admissions_by_hospital
-                 fact_admissions_by_condition.sql → healthcare_mart.fact_admissions_by_condition
-                 fact_admissions_by_demographics.sql → healthcare_mart.fact_admissions_by_demographics
-```
+
+| Layer | Asset | Output |
+|---|---|---|
+| Extract | `download_data.py` | `data/modified_healthcare_dataset.csv` |
+| Load | `upload_to_gcs.py` | GCS Bucket (data lake) |
+| Raw | `load_healthcare_csv.py` | `healthcare_raw.load_raw` |
+| Staging | `stg_admissions.sql` | `healthcare_staging.stg_admissions` |
+| Staging | `stg_patients.sql` | `healthcare_staging.stg_patients` |
+| Mart | `dim_hospitals.sql` | `healthcare_mart.dim_hospitals` |
+| Mart | `dim_medical_conditions.sql` | `healthcare_mart.dim_medical_conditions` |
+| Mart | `fact_hospital_admissions.sql` | `healthcare_mart.fact_hospital_admissions` |
+| Mart | `fact_admissions_by_hospital.sql` | `healthcare_mart.fact_admissions_by_hospital` |
+| Mart | `fact_admissions_by_condition.sql` | `healthcare_mart.fact_admissions_by_condition` |
+| Mart | `fact_admissions_by_demographics.sql` | `healthcare_mart.fact_admissions_by_demographics` |
+
+> **Note:** The mart layer filters data to **2020–2023** to focus the analysis on a consistent 4-year window. The full raw dataset (~55,500 rows) spanning 2019–2024 remains intact in `healthcare_raw.load_raw`.
 
 **Tech stack:** Python · SQL · Google Cloud Storage · Google BigQuery · Terraform · Bruin
 
@@ -70,9 +72,7 @@ This pipeline is designed to help answer:
 1. **Patient distribution** — Which hospitals have the highest admission volumes? How are patients distributed by age group and gender?
 2. **Medical conditions** — What are the most common diagnoses? How does condition prevalence vary across hospitals?
 3. **Admission patterns** — What is the breakdown of Emergency vs. Elective vs. Urgent admissions? Are there seasonal trends?
-4. **Length of stay** — Which conditions or admission types lead to the longest stays?
-5. **Billing & financial** — What is the average billing amount by condition, hospital, or insurance provider? Which conditions are the most expensive to treat?
-6. **Test results** — What proportion of admissions result in abnormal test results, and does this vary by condition or hospital?
+4. **Billing & financial** — What is the average billing amount by condition and hospital? Which conditions are the most expensive to treat?
 
 ---
 
@@ -81,15 +81,10 @@ This pipeline is designed to help answer:
 Before you begin, make sure you have:
 
 - A **Google Cloud Platform (GCP)** account with billing enabled
-- Access to a **Linux/macOS terminal** (or GitHub Codespaces)
-
-> Kaggle credentials are only required if you want Bruin to download the dataset automatically. A pre-processed CSV is already included in the `data/` folder — see [Step 3](#step-3--configure-data-source) for details.
-
-Before you begin, make sure you have:
-
-- A **Google Cloud Platform (GCP)** account with billing enabled
 - A **Kaggle** account with API access (optional — see Step 3)
 - Access to a **Linux/macOS terminal** (or GitHub Codespaces)
+
+> A pre-processed CSV is already included in the `data/` folder — Kaggle credentials are only needed if you want to download fresh data.
 
 ---
 
@@ -401,6 +396,54 @@ healthcare/
 
 ---
 
+## Key Findings
+
+> Based on analysis of **2020–2023** hospital admission records across four Chicago hospitals. Data is filtered at the mart layer — the full dataset (2019–2024) is preserved in the raw layer.
+
+### 1. Hospital Admissions Distribution
+All four hospitals — **Northwestern Memorial Hospital** (11,187), **UChicago Medicine** (11,158), **UI Health** (11,154), and **Loyola University Medical Center** (10,760) — show near-equal admission volumes. This suggests a balanced patient distribution across the Chicago healthcare network, with no single hospital significantly overburdened relative to the others.
+
+Seniors represent the **largest admission group**, followed by Middle Age, Young Adults, and Pediatric patients — consistent with the expectation that older populations use hospital services more frequently. Female patients show higher admission counts than male patients across all age groups except Young Adults.
+
+### 2. Medical Condition Prevalence
+Admissions are distributed almost evenly across all 8 conditions (12.3%–12.7%), indicating no single condition dominates overall. When broken down by hospital, the condition mix remains **consistent across all four sites** — each hospital's leading condition shifts slightly (Heart disease at Northwestern Memorial, Obesity at UI Health, Diabetes at UChicago Medicine, Cancer at Loyola), but no hospital is heavily specialised in any single condition. This uniformity suggests patients are not being triaged to hospitals based on condition type.
+
+### 3. Admission Patterns
+The admission type breakdown is:
+- **Emergency: 36.4%** (16,124 admissions) — the largest category
+- **Elective: 23.8%** (10,544)
+- **Urgent: 21.1%** (9,344)
+- **Routine: 18.6%** (8,247)
+
+Over one-third of admissions are emergency cases, highlighting the acute care burden on these hospitals. Monthly admissions range from approximately **3,400 to 3,900**, with a mild **peak around July–August** and a dip in February, potentially reflecting summer activity-related incidents.
+
+### 4. Billing & Financial
+Average billing is consistent across hospitals (~$21,750–$22,000), confirming no hospital charges significantly more than others. However, billing varies significantly by condition:
+
+| Condition | Avg Billing | Avg Length of Stay |
+|---|---|---|
+| Cancer | $64,688 | 36.5 days |
+| Heart Disease | $44,993 | 26.9 days |
+| Alzheimer's | $32,663 | 54.4 days |
+| Diabetes | $12,511 | 8.1 days |
+| Obesity | $10,068 | 6.0 days |
+| Asthma | $5,029 | 3.5 days |
+| Infections | $2,748 | 5.5 days |
+| Flu | $2,744 | 2.5 days |
+
+**Cancer** is the most expensive condition at $64,688 average billing — over **23x more** than Flu ($2,744). While Alzheimer's has the longest average stay (54.4 days), Cancer drives the highest billing due to treatment cost intensity.
+
+### Summary
+
+| Research Question | Key Insight |
+|---|---|
+| Patient distribution | Even across all 4 hospitals; Seniors are the largest group |
+| Medical conditions | Uniform prevalence (~12.5% each); consistent mix across hospitals |
+| Admission patterns | 36% Emergency; peak admissions in July–Aug |
+| Billing & financial | Cancer = highest cost ($64K avg); Alzheimer's = longest stay (54 days) |
+
+---
+
 ## Troubleshooting
 
 ### `bruin validate` shows 0 assets
@@ -432,8 +475,6 @@ Make sure `KAGGLE_USERNAME` and `KAGGLE_KEY` are exported, or place `kaggle.json
 
 ---
 
-## Dataset
+## Dashboard
 
-Source: [Healthcare Dataset on Kaggle](https://www.kaggle.com/datasets/eduardolicea/healthcare-dataset)
-
-~55,500 hospital admission records with fields: patient name, age, gender, blood type, medical condition, admission/discharge dates, hospital, doctor, insurance provider, billing amount, room number, admission type, medication, and test results.
+View the interactive Looker Studio dashboard: [Healthcare Admissions Analytics](https://lookerstudio.google.com/reporting/befac3fb-12ae-4d7b-ae74-a18f4f0825dc)
