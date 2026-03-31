@@ -1,36 +1,33 @@
+# Bruin
 .bruin.yml
 logs/runs
 logs/*.log
-*__pycache__/
+
+# Python
+__pycache__/
+**/__pycache__/
 *.py[cod]
+.python*
+.env
 
+# Virtual environment
+venv/
 
-# Local .terraform directories
-.terraform/
-
-#sensitive info
-keys*
+# GCP / sensitive info
+keys/
 *.tfvars
 
-#env
-venv
-
 # Terraform
+.terraform/
 *.tfstate
 *.tfstate.*
 *.terraform.lock*
-
-# Ignore override files as they are usually used to override resources locally and so
-# are not checked in
 override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
-
-# Ignore CLI configuration files
 .terraformrc
 terraform.rc
-.bruin.yml
 
-#python
-.python*
+# Downloads / archives
+*.zip

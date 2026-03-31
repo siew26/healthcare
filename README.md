@@ -1,102 +1,439 @@
-# healthcare
+# Healthcare Data Pipeline
 
-## Problem statement
-The goal of this project is to design and implement an end-to-end data pipeline to analyze healthcare data, focusing on hospital admissions, patient demographics, medical conditions and financial aspects of healthcare utilization.
+## Overview
 
-The pipeline automates data ingestion from an external source, processes and transforms the data into structured layers and enables efficient querying through a data warehouse.
+An end-to-end data pipeline that ingests healthcare data from Kaggle, processes it through a multi-layer architecture (raw → staging → mart), and loads it into Google BigQuery for analysis.
 
-The final output is a dashboard that provides insights into patient distribution, common medical conditions and billing trends over time, supporting data-driven decision making in healthcare analysis.
+**Pipeline layers:**
+```
+Kaggle API
+    ↓  extract   download_data.py
+    ↓  load      upload_to_gcs.py       → GCS bucket (data lake)
+    ↓  raw       load_healthcare_csv.py → BigQuery: healthcare_raw.load_raw
+    ↓  staging   stg_admissions.sql     → BigQuery: healthcare_staging.stg_admissions
+                 stg_patients.sql       → BigQuery: healthcare_staging.stg_patients
+    ↓  mart      dim_hospitals.sql           → healthcare_mart.dim_hospitals
+                 dim_medical_conditions.sql  → healthcare_mart.dim_medical_conditions
+                 fact_hospital_admissions.sql → healthcare_mart.fact_hospital_admissions
+                 fact_admissions_by_hospital.sql → healthcare_mart.fact_admissions_by_hospital
+                 fact_admissions_by_condition.sql → healthcare_mart.fact_admissions_by_condition
+                 fact_admissions_by_demographics.sql → healthcare_mart.fact_admissions_by_demographics
+```
 
-## Virtual environment Setup
+**Tech stack:** Python · SQL · Google Cloud Storage · Google BigQuery · Terraform · Bruin
 
+---
+
+## Problem Statement
+
+Healthcare systems generate large volumes of admissions data, yet insights about patient flow, medical conditions, and financial utilization are often fragmented and difficult to access. This project addresses that gap by building a fully automated data pipeline that:
+
+- Ingests raw hospital admissions records from an external source
+- Cleans and transforms data across structured warehouse layers
+- Exposes analytics-ready tables for reporting and dashboarding
+
+The goal is to enable data-driven decision making around patient distribution, common medical conditions, hospital utilization, and billing trends over time.
+
+---
+
+## Dataset
+
+**Source:** [Healthcare Dataset on Kaggle](https://www.kaggle.com/datasets/eduardolicea/healthcare-dataset)
+
+~55,500 synthetic hospital admission records across hospitals in the United States.
+
+| Column | Description |
+|---|---|
+| `Name` | Patient name |
+| `Age` | Patient age |
+| `Gender` | Patient gender |
+| `Blood Type` | Patient blood type |
+| `Medical Condition` | Primary diagnosis (e.g., Cancer, Flu, Asthma) |
+| `Date of Admission` | Admission date |
+| `Discharge Date` | Discharge date |
+| `Length of Stay` | Days admitted |
+| `Hospital` | Hospital name |
+| `Doctor` | Attending physician |
+| `Admission Type` | Emergency / Elective / Urgent |
+| `Insurance Provider` | Insurance company |
+| `Billing Amount` | Total billed amount (USD) |
+| `Room Number` | Room assigned |
+| `Medication` | Medication prescribed |
+| `Test Results` | Normal / Abnormal / Inconclusive |
+
+---
+
+## Key Research Questions
+
+This pipeline is designed to help answer:
+
+1. **Patient distribution** — Which hospitals have the highest admission volumes? How are patients distributed by age group and gender?
+2. **Medical conditions** — What are the most common diagnoses? How does condition prevalence vary across hospitals?
+3. **Admission patterns** — What is the breakdown of Emergency vs. Elective vs. Urgent admissions? Are there seasonal trends?
+4. **Length of stay** — Which conditions or admission types lead to the longest stays?
+5. **Billing & financial** — What is the average billing amount by condition, hospital, or insurance provider? Which conditions are the most expensive to treat?
+6. **Test results** — What proportion of admissions result in abnormal test results, and does this vary by condition or hospital?
+
+---
+
+## Prerequisites
+
+Before you begin, make sure you have:
+
+- A **Google Cloud Platform (GCP)** account with billing enabled
+- Access to a **Linux/macOS terminal** (or GitHub Codespaces)
+
+> Kaggle credentials are only required if you want Bruin to download the dataset automatically. A pre-processed CSV is already included in the `data/` folder — see [Step 3](#step-3--configure-data-source) for details.
+
+Before you begin, make sure you have:
+
+- A **Google Cloud Platform (GCP)** account with billing enabled
+- A **Kaggle** account with API access (optional — see Step 3)
+- Access to a **Linux/macOS terminal** (or GitHub Codespaces)
+
+---
+
+## Step 1 — Clone the Repository
+
+```bash
+git clone https://github.com/siew26/healthcare.git
+cd healthcare
+```
+
+---
+
+## Step 2 — Set Up Python Environment
+
+```bash
 python -m venv venv
-activate virtual environment
+source venv/bin/activate        # Linux / macOS
+# venv\Scripts\activate         # Windows
 
-## Install dependencies
-after cloning the environment, run requirement file
-pip install - r requirements.txt
+pip install -r requirements.txt
+```
 
-[dataset for this project]
-Make sure your Kaggle API credentials are set:
-export KAGGLE_USERNAME=your_username
-export KAGGLE_KEY=your_key
+---
 
-Run your script:
-python download_data.py
+## Step 3 — Configure Data Source
 
-## Setup GCP credentials
-Create a new project named healthcare
+You have two options for providing the source data:
 
-1. Go to GCP Console → IAM & Admin → Service Accounts
-2. Create a service account with:
-    Storage Admin (to upload to GCS)
-    BigQuery Admin (to create tables & datasets)
-3. Generate a JSON key file. Save it somewhere in your project, e.g., gcp-sa.json.
-4. Set environment variable in Codespaces / terminal:
+### Option A — Use the included CSV (recommended for quick testing)
 
-export GOOGLE_APPLICATION_CREDENTIALS="path/to/gcp-sa.json"
-export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/../keys/healthcare-dataset.json"
+The repository already includes a pre-processed CSV at `data/modified_healthcare_dataset.csv`. The pipeline's `upload_to_gcs.py` asset reads from this path by default, so **no Kaggle account is needed**.
 
-This makes Python (and Bruin / Terraform) authenticate with GCP automatically.
+Simply skip to [Step 4](#step-4--set-up-gcp-project) — the file is ready to use.
 
-## Install terraform
-sudo apt update
-sudo apt install -y wget unzip
+### Option B — Download fresh data from Kaggle
+
+If you want Bruin to download the latest dataset directly from Kaggle:
+
+1. Log in to [kaggle.com](https://www.kaggle.com) → Account → API → **Create New Token**
+2. Save the downloaded `kaggle.json` to `keys/kaggle.json`
+3. Export your credentials:
+
+```bash
+export KAGGLE_USERNAME=your_kaggle_username
+export KAGGLE_KEY=your_kaggle_api_key
+```
+
+Or place `kaggle.json` at `~/.kaggle/kaggle.json` (Kaggle's default location).
+
+The `download_data` asset will run first and overwrite the file in `data/` with a fresh download.
+
+---
+
+## Step 4 — Set Up GCP Project
+
+### 4a. Create a GCP project
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com)
+2. Create a new project (e.g., `healthcare-dataset`)
+3. Note your **Project ID** (shown in the project selector, e.g., `healthcare-dataset-491812`)
+
+### 4b. Create a service account
+
+1. Go to **IAM & Admin → Service Accounts**
+2. Click **Create Service Account**, name it (e.g., `healthcare-sa`)
+3. Grant the following roles:
+   - `Storage Admin` — to upload files to GCS
+   - `BigQuery Admin` — to create datasets and tables
+4. Click **Done**, then open the service account
+5. Go to **Keys → Add Key → Create new key → JSON**
+6. Save the downloaded JSON file to `keys/healthcare-dataset.json`
+
+### 4c. Set environment variable
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/keys/healthcare-dataset.json"
+```
+
+> Add this line to your `~/.bashrc` or `~/.zshrc` to persist it across sessions.
+
+---
+
+## Step 5 — Install Terraform
+
+```bash
+sudo apt update && sudo apt install -y wget unzip
 wget https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip
 unzip terraform_1.5.7_linux_amd64.zip
 sudo mv terraform /usr/local/bin/
 terraform -v
+```
 
-✅ You should see something like:
+Expected output: `Terraform v1.5.7`
 
-Terraform v1.5.7
+---
 
-## install gcloud SDK
-# Update packages
+## Step 6 — Provision GCP Infrastructure with Terraform
+
+Terraform creates the GCS bucket and three BigQuery datasets (`healthcare_raw`, `healthcare_staging`, `healthcare_mart`).
+
+### 6a. Update `terraform/terraform.tfvars`
+
+Open `terraform/terraform.tfvars` and replace the project ID with your own:
+
+```hcl
+project_id = "your-gcp-project-id"
+region     = "us-central1"
+```
+
+### 6b. Authenticate with gcloud (required for Terraform provider)
+
+```bash
+# Install gcloud SDK if not already installed
 sudo apt update && sudo apt install -y curl apt-transport-https ca-certificates gnupg
-
-# Add Google Cloud SDK repo
-echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
-
-# Add Google Cloud public key
-curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
-
-# Install the SDK
+echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" \
+  | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+  | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
 sudo apt update && sudo apt install -y google-cloud-sdk
 
-sudo apt install -y google-cloud-sdk
-
-
-# Verify installation
-gcloud version
-
-# authenticate
+# Authenticate
 gcloud auth application-default login
+```
 
-## Run terraform (in terraform folder)
+If you get a `QUOTA_PROJECT_ID` error, run:
+
+```bash
+gcloud auth application-default set-quota-project your-gcp-project-id
+```
+
+### 6c. Apply Terraform
+
+```bash
+cd terraform
 terraform init
-terraform plan 
+terraform plan
 terraform apply
+cd ..
+```
 
-If received error about argument QUOTA_PROJECT_ID, run the following:
-gcloud auth application-default set-quota-project your_project_id
+Type `yes` when prompted. Once complete, you should have:
+- GCS bucket: `your-project-id-data-lake`
+- BigQuery datasets: `healthcare_raw`, `healthcare_staging`, `healthcare_mart`
 
-Once this works, GCS bucket and BigQuery datasets created.
+---
 
-## Install bruin
+## Step 7 — Install Bruin CLI
+
+[Bruin](https://getbruin.com) is the pipeline orchestrator that runs all assets in dependency order.
+
+```bash
 curl -LsSf https://getbruin.com/install/cli | sh
+source ~/.bashrc    # or restart terminal
 
-# restart
-source ~/.bashrc
+bruin --version     # verify installation
+```
 
-# verify installation
-bruin --help
+---
 
-4️⃣ Initialize your project
+## Step 8 — Configure Bruin Connections
 
-Go to your project folder:
+Bruin reads its configuration from `.bruin.yml` at the **root of the repository**.
 
-bruin init
-Choose template: empty
-Then create pipeline.yml + assets/ manually.
-Rename empty to bruin
+Open `.bruin.yml` and update the `project_id` and `service_account_file` values to match your own:
+
+```yaml
+default_environment: default
+environments:
+    default:
+        connections:
+            google_cloud_platform:
+                - name: "bigquery"
+                  project_id: "your-gcp-project-id"
+                  service_account_file: "/absolute/path/to/keys/healthcare-dataset.json"
+                - name: "gcp-default"
+                  project_id: "your-gcp-project-id"
+                  service_account_file: "/absolute/path/to/keys/healthcare-dataset.json"
+```
+
+> Use the **absolute path** to your service account JSON file.
+
+---
+
+## Step 9 — Run the Pipeline
+
+### 9a. Validate all assets
+
+From the `bruin/` directory, run:
+
+```bash
+cd bruin
+bruin validate .
+```
+
+Expected output — you should see **12 assets** validated:
+
+```
+Validating pipeline: healthcare_pipeline
+✅ download_data
+✅ upload_data
+✅ load_gcs_to_bq
+✅ healthcare_raw.raw_data
+✅ healthcare_staging.stg_admissions
+✅ healthcare_staging.stg_patients
+✅ healthcare_mart.dim_hospitals
+✅ healthcare_mart.dim_medical_conditions
+✅ healthcare_mart.fact_hospital_admissions
+✅ healthcare_mart.fact_admissions_by_hospital
+✅ healthcare_mart.fact_admissions_by_condition
+✅ healthcare_mart.fact_admissions_by_demographics
+
+Found 12 assets.
+```
+
+If you see **0 assets**, check the [Troubleshooting](#troubleshooting) section.
+
+### 9b. Run the full pipeline
+
+```bash
+cd bruin
+bruin run .
+```
+
+The pipeline runs assets in dependency order. Expect it to take **20–40 seconds**.
+
+Expected output:
+
+```
+Starting pipeline: healthcare_pipeline
+[PASS] download_data
+[PASS] upload_data
+[PASS] load_gcs_to_bq
+[PASS] healthcare_raw.raw_data
+[PASS] healthcare_staging.stg_admissions
+[PASS] healthcare_staging.stg_patients
+[PASS] healthcare_mart.dim_hospitals
+[PASS] healthcare_mart.dim_medical_conditions
+[PASS] healthcare_mart.fact_hospital_admissions
+[PASS] healthcare_mart.fact_admissions_by_hospital
+[PASS] healthcare_mart.fact_admissions_by_condition
+[PASS] healthcare_mart.fact_admissions_by_demographics
+
+Finished! 12/12 assets passed.
+```
+
+### 9c. Run a single asset (optional)
+
+```bash
+bruin run assets/mart/dim_hospitals.sql
+```
+
+---
+
+## Step 10 — Verify Results in BigQuery
+
+1. Go to [BigQuery Console](https://console.cloud.google.com/bigquery)
+2. Select your project
+3. You should see three datasets with the following tables:
+
+| Dataset | Table | Description |
+|---|---|---|
+| `healthcare_raw` | `load_raw` | Raw CSV loaded from GCS (~55,500 rows) |
+| `healthcare_staging` | `stg_admissions` | Cleaned admission records |
+| `healthcare_staging` | `stg_patients` | Deduplicated patient master |
+| `healthcare_mart` | `dim_hospitals` | Hospital dimension |
+| `healthcare_mart` | `dim_medical_conditions` | Medical condition dimension |
+| `healthcare_mart` | `fact_hospital_admissions` | Core fact table |
+| `healthcare_mart` | `fact_admissions_by_hospital` | Aggregated by hospital |
+| `healthcare_mart` | `fact_admissions_by_condition` | Aggregated by condition |
+| `healthcare_mart` | `fact_admissions_by_demographics` | Aggregated by demographics |
+
+---
+
+## Project Structure
+
+```
+healthcare/
+├── .bruin.yml                  # Root Bruin config (GCP connections)
+├── requirements.txt            # Python dependencies
+├── terraform/                  # Infrastructure as Code
+│   ├── main.tf                 # GCS bucket + BigQuery datasets
+│   ├── variables.tf
+│   └── terraform.tfvars        # ← update with your project_id
+├── keys/                       # Credentials (gitignored)
+│   ├── healthcare-dataset.json # GCP service account key
+│   └── kaggle.json             # Kaggle API credentials
+├── data/                       # Downloaded CSV (gitignored)
+└── bruin/                      # Pipeline definition
+    ├── pipeline.yml            # Pipeline name, schedule, connections
+    └── assets/
+        ├── extract/
+        │   └── download_data.py        # Downloads CSV from Kaggle
+        ├── load/
+        │   └── upload_to_gcs.py        # Uploads CSV to GCS
+        ├── raw/
+        │   ├── load_healthcare_csv.py  # Loads GCS → BigQuery raw
+        │   └── validate_raw_load.sql   # Validates raw row count
+        ├── staging/
+        │   ├── stg_admissions.sql
+        │   └── stg_patients.sql
+        └── mart/
+            ├── dim_hospitals.sql
+            ├── dim_medical_conditions.sql
+            ├── fact_hospital_admissions.sql
+            ├── fact_admissions_by_hospital.sql
+            ├── fact_admissions_by_condition.sql
+            └── fact_admissions_by_demographics.sql
+```
+
+---
+
+## Troubleshooting
+
+### `bruin validate` shows 0 assets
+
+Bruin looks for `.bruin.yml` by traversing **up** from the current directory to the repo root. Make sure:
+- You are running `bruin validate .` from inside the `bruin/` folder
+- `/workspaces/healthcare/.bruin.yml` (root level) has valid GCP connections — **not** `connections: {}`
+
+### `connection not found` error
+
+Your `.bruin.yml` must define connections named exactly `bigquery` and `gcp-default` (matching `pipeline.yml`'s `default_connections`).
+
+### Terraform `QUOTA_PROJECT_ID` error
+
+```bash
+gcloud auth application-default set-quota-project your-gcp-project-id
+```
+
+### Python `ModuleNotFoundError` in Bruin assets
+
+Bruin runs Python assets as modules. Ensure `__init__.py` files exist in:
+- `bruin/`
+- `bruin/assets/`
+- `bruin/assets/extract/`
+
+### Kaggle download fails
+
+Make sure `KAGGLE_USERNAME` and `KAGGLE_KEY` are exported, or place `kaggle.json` at `~/.kaggle/kaggle.json`.
+
+---
+
+## Dataset
+
+Source: [Healthcare Dataset on Kaggle](https://www.kaggle.com/datasets/eduardolicea/healthcare-dataset)
+
+~55,500 hospital admission records with fields: patient name, age, gender, blood type, medical condition, admission/discharge dates, hospital, doctor, insurance provider, billing amount, room number, admission type, medication, and test results.
