@@ -14,6 +14,7 @@ depends:
 
 SELECT
   hospital_name,
+  admission_year,
   COUNT(*) AS total_admissions,
   COUNT(DISTINCT patient_name) AS unique_patients,
   COUNT(DISTINCT medical_condition) AS distinct_conditions,
@@ -26,4 +27,4 @@ SELECT
   COUNTIF(admission_type = 'Elective') AS elective_admission_count,
   CURRENT_TIMESTAMP() AS loaded_at
 FROM `healthcare-dataset-491812.healthcare_mart.fact_hospital_admissions`
-GROUP BY hospital_name
+GROUP BY 1,2

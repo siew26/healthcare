@@ -41,3 +41,4 @@ SELECT
   END AS age_group,
   loaded_at
 FROM `healthcare-dataset-491812.healthcare_staging.stg_admissions`
+where EXTRACT(YEAR FROM admission_date) between 2020 and 2023
